@@ -16,71 +16,70 @@ db = firestore.client()
 
 # Lista de emociones (DeepFace detecta estas emociones por defecto)
 EMOTIONS = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
+from flask import Flask, request, jsonify
+from datetime import datetime
+import numpy as np
+import cv2
+import os
+from deepface import DeepFace
+# from firebase_admin import firestore, initialize_app
+
+app = Flask(__name__)
+
 
 @app.route('/upload', methods=['POST'])
 def upload_image():
     try:
-        # Verificar si se envió un archivo
-        # if 'image' not in request.files:
-        #     return jsonify({'error': 'No se envió ninguna imagen'}), 400
+        # Verificar campos de formulario
+        bpm = request.form.get('bpm')
+        gsr = request.form.get('gsr')
+        file = request.files.get('image')
 
-        # # Leer la imagen enviada
-        # file = request.files['image']
-        
-        # Convertir los datos de la solicitud en una imagen
-        np_img = np.frombuffer(request.data, np.uint8)
+        if not bpm or not gsr:
+            return jsonify({'error': 'Faltan bpm o gsr'}), 400
+        if not file:
+            return jsonify({'error': 'No se recibió imagen'}), 400
+
+        # Leer la imagen como arreglo numpy
+        np_img = np.frombuffer(file.read(), np.uint8)
         img = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
 
-        # Crear el directorio '/img' si no existe
-        import os
+        # Guardar la imagen localmente
         os.makedirs('./img', exist_ok=True)
-
-        # Guardar la imagen en el directorio '/img' con un nombre único
         img_path = f'./img/{datetime.now().strftime("%Y%m%d%H%M%S%f")}.jpg'
         cv2.imwrite(img_path, img)
 
-        # Convertir la imagen a escala de grises para detección de rostros
+        # Convertir a escala de grises y detectar rostros
         gray_frame = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        # Cargar el clasificador Haar Cascade para detectar rostros
         face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         faces = face_cascade.detectMultiScale(gray_frame, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
         if len(faces) == 0:
             return jsonify({'error': 'No se detectaron rostros en la imagen'}), 400
 
-        # Procesar cada rostro detectado
-        for (x, y, w, h) in faces:
-            # Extraer la región del rostro (ROI)
-            face_roi = img[y:y + h, x:x + w]
+        # Analizar el primer rostro detectado
+        (x, y, w, h) = faces[0]
+        face_roi = img[y:y + h, x:x + w]
 
-            # Analizar emociones con DeepFace
-            result = DeepFace.analyze(face_roi, actions=['emotion'], enforce_detection=False)
+        result = DeepFace.analyze(face_roi, actions=['emotion'], enforce_detection=False)
+        if isinstance(result, list):
+            result = result[0]
 
-            # Manejar el caso de múltiples resultados
-            if isinstance(result, list):
-                result = result[0]  # Tomar el primer resultado si es una lista
+        emotion = result['dominant_emotion']
+        confidence = result['emotion'][emotion]
 
-            # Obtener la emoción dominante
-            emotion = result['dominant_emotion']
-            confidence = result['emotion'][emotion]
+        # Preparar datos
+        data = {
+            'emotion': emotion,
+            'confidence': confidence,
+            'bpm': float(bpm),
+            'sweating': float(gsr),
+            'date': datetime.now().isoformat()
+        }
 
-            # Simular datos de BPM y sudoración (en un caso real, estos vendrían de sensores)
-            bpm = np.random.randint(60, 100)  # Simulación de BPM
-            sweat_level = np.random.uniform(0.1, 1.0)  # Simulación de sudoración
+        db.collection('emotion_data').add(data)  # Descomenta si usas Firebase
 
-            # Guardar los datos en Firebase
-            data = {
-                'emotion': emotion,
-                'confidence': confidence,
-                'bpm': bpm,
-                'sweating': sweat_level,
-                'date': datetime.now().isoformat()
-            }
-            db.collection('emotion_data').add(data)
-
-            # Devolver la respuesta con la emoción detectada
-            return jsonify({'emotion': emotion, 'confidence': confidence, 'bpm': bpm, 'sweat_level': sweat_level}), 200
+        return jsonify(data), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
