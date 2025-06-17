@@ -5,7 +5,7 @@ from deepface import DeepFace
 import firebase_admin
 from firebase_admin import credentials, firestore
 from datetime import datetime
-
+modelo = 'modelo_facial.h5'  # Ruta al modelo entrenado
 # Inicializar la app Flask
 app = Flask(__name__)
 
